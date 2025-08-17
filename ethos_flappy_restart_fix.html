@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QorGenius Flappy Game</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#e6f0ff;
+    --terminal:#1f2937;
+    --accent:#00ff99;
+    --border:#b6c8ff;
+    --glow:0 0 6px rgba(0,255,163,.7), 0 0 12px rgba(0,255,163,.4);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);font-family:'VT323',monospace;}
+  .wrap{display:grid;place-items:center;height:100%;}
+  .frame{
+    width:min(860px,96vw);
+    height:min(560px,86vh);
+    background:linear-gradient(180deg,#e6f0ff 0%,#dce9ff 60%,#d3e3ff 100%);
+    border:3px solid var(--border);
+    border-radius:18px;
+    box-shadow:0 8px 24px rgba(0,0,0,.12), inset 0 0 0 2px #fff;
+    position:relative;overflow:hidden;
+  }
+
+  header{
+    position:absolute; inset:auto 0 0 0; height:46px;
+    background:#f3f8ff; border-top:2px solid var(--border);
+    display:flex; align-items:center; gap:10px; padding:6px 10px;
+  }
+  .badge{font-size:22px;color:var(--terminal)}
+  .btn{
+    margin-left:auto; border:2px solid var(--terminal);
+    background:#eef6ff; padding:4px 12px; border-radius:12px;
+    font-size:20px; cursor:pointer; transition:transform .08s ease;
+  }
+  .btn:hover{box-shadow:var(--glow)}
+  .btn:active{transform:translateY(1px)}
+
+  #gameCanvas{display:block;width:100%;height:100%}
+
+  .hud{
+    position:absolute; left:12px; top:10px; color:var(--terminal);
+    font-size:28px; text-shadow:0 1px #fff;
+  }
+  .score{font-size:34px}
+
+  .popup,.overlay{
+    position:absolute; inset:0; display:none; place-items:center; background:rgba(255,255,255,.55);
+    backdrop-filter: blur(2px);
+  }
+  .card{
+    min-width:320px; border:3px solid var(--terminal); border-radius:18px; padding:14px 16px; background:#ffffffcc;
+    box-shadow:0 10px 24px rgba(0,0,0,.18)
+  }
+  .title{font-size:34px; margin:0 0 6px}
+  .subtitle{font-size:22px; margin:0 0 12px; opacity:.85}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .k{border:2px solid var(--terminal); border-radius:10px; padding:2px 8px; font-size:20px; background:#f7fbff}
+
+  /* terminal bars (obstacles) */
+  .scanline{
+    position:absolute; inset:0; pointer-events:none; opacity:.08;
+    background:repeating-linear-gradient(to bottom, transparent 0 8px, rgba(0,0,0,.2) 8px 9px);
+  }
+
+  /* Notification */
+  .notify{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    display:none; background:#ffffff; border:3px solid var(--terminal);
+    border-radius:16px; padding:12px 16px; font-size:20px; color:var(--terminal);
+    box-shadow:0 10px 24px rgba(0,0,0,.18);
+  }
+  .notify .close{ margin-left:10px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="frame">
+    <canvas id="gameCanvas" width="800" height="520"></canvas>
+    <div class="scanline"></div>
+    <div class="hud"><span>QorGenius // </span><span class="score" id="score">0</span></div>
+    <div class="popup" id="popup">
+      <div class="card">
+        <h2 class="title">GAME OVER</h2>
+        <p class="subtitle">Score: <span id="finalScore">0</span></p>
+        <div class="row">
+          <button class="btn" id="btnRestart">Restart <span class="k">Enter</span></button>
+        </div>
+      </div>
+    </div>
+    <!-- Start overlay -->
+    <div class="overlay" id="overlay">
+      <div class="card">
+        <h2 class="title">Welcome to QorGenius Flappy</h2>
+        <p class="subtitle">Enter your X username to begin:</p>
+        <input type="text" id="username"
+          style="width:100%;padding:6px;font-size:20px;margin-bottom:10px;
+          border:2px solid var(--terminal);border-radius:10px;">
+	<p class="subtitle">Reach 1000 Score to get QorGenius Premium Code!</p>
+
+        <button class="btn" id="btnStart">Start</button>
+   <p class="subtitle">*Press Space / Click / Tap to flap!</p>
+
+      </div>
+    </div>
+    <!-- Center notification -->
+    <div class="notify" id="notify">
+      <span id="notifyMsg"></span>
+      <span class="close" onclick="hideNotify()">✖</span>
+    </div>
+    <header>
+      <div class="badge">QorGenius Flappy</div>
+      <button class="btn" onclick="window.open('https://x.com/QorgeniusOS','_blank')">X</button>
+<button class="btn" onclick="window.open('https://qorgenius-os.xyz/','_blank')">Website</button>
+      <button class="btn" id="btnHelp">Help</button>
+    </header>
+  </div>
+</div>
+
+<script>
+const SPRITE_SRC = "logo_flappy.png";
+
+// --- Canvas & Context ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let username = "";
+
+
+// --- Game State ---
+let birdImg = new Image();
+birdImg.src = SPRITE_SRC || ""; // fallback to blank if not present
+const state = { reset: ()=>({ x:140, y:canvas.height/2, vy:0, r:0, alive:true, started:false, score:0 }) };
+let bird = state.reset();
+
+const G = 0.5;       // gravity
+const FLAP = -7.7;   // jump impulse
+const GAP = 150;     // vertical gap
+const SPEED = 3.2;   // pipe speed
+const PIPE_W = 70;
+const PIPE_SPAWN = 120; // frames between spawns
+
+let pipes = [];
+let frame = 0;
+let running = false; // start only after overlay Start
+
+// --- Input ---
+function flap() { 
+  if (!bird.alive) return;
+  bird.vy = FLAP;
+  bird.started = true;
+}
+window.addEventListener('keydown', e=>{
+  if (e.code === 'Space') { e.preventDefault(); if (running) flap(); }
+  if (e.code === 'Enter' && !bird.alive) restart();
+});
+canvas.addEventListener('mousedown', ()=>{ if (running) flap(); });
+canvas.addEventListener('touchstart', (e)=>{ e.preventDefault(); if (running) flap(); }, {passive:false});
+
+// Help -> notification instead of alert
+document.getElementById('btnHelp').onclick = ()=>{
+  showNotify("Controls: Space / Click / Tap = Flap · Enter = Restart");
+};
+
+// --- Pipes ---
+function spawnPipe() {
+  const margin = 40;
+  const topH = Math.random() * (canvas.height - GAP - margin*2) + margin;
+  pipes.push({ x: canvas.width + 10, top: topH, passed:false });
+}
+
+function resetGame() {
+  bird = state.reset();
+  pipes = [];
+  frame = 0;
+  document.getElementById('score').textContent = 0;
+  hidePopup();
+}
+function restart(){ resetGame(); }
+
+// --- Draw Helpers ---
+function drawBg(){
+  // pastel terminal sky
+  const g = ctx.createLinearGradient(0,0,0,canvas.height);
+  g.addColorStop(0,'#e6f0ff');
+  g.addColorStop(.6,'#dce9ff');
+  g.addColorStop(1,'#d3e3ff');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // faint pixel grid
+  ctx.globalAlpha = .08;
+  for (let x=0; x<canvas.width; x+=16) { ctx.fillRect(x,0,1,canvas.height); }
+  for (let y=0; y<canvas.height; y+=16) { ctx.fillRect(0,y,canvas.width,1); }
+  ctx.globalAlpha = 1;
+}
+
+function drawPipes(){
+  ctx.fillStyle = 'lime'; // terminal blocks
+  ctx.strokeStyle = '#b6c8ff';
+  ctx.lineWidth = 3;
+
+  pipes.forEach(p=>{
+    // top block
+    ctx.fillRect(p.x, 0, PIPE_W, p.top);
+    ctx.strokeRect(p.x, 0, PIPE_W, p.top);
+    // bottom block
+    const botY = p.top + GAP;
+    const botH = canvas.height - botY;
+    ctx.fillRect(p.x, botY, PIPE_W, botH);
+    ctx.strokeRect(p.x, botY, PIPE_W, botH);
+  });
+}
+
+function drawBird(){
+  const w = 48, h = 48;
+  ctx.save();
+  ctx.translate(bird.x, bird.y);
+  ctx.rotate(bird.vy * 0.03);
+  if (birdImg.complete && birdImg.naturalWidth>0) { 
+    ctx.drawImage(birdImg, -w/2, -h/2, w, h);
+  } else {
+    // fallback square
+    ctx.fillStyle = '#00ffa3';
+    ctx.fillRect(-w/2, -h/2, w, h);
+  }
+  ctx.restore();
+}
+
+function aabb(ax,ay,aw,ah, bx,by,bw,bh){
+  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+}
+
+// --- Popup & Notification ---
+const popup = document.getElementById('popup');
+const finalScore = document.getElementById('finalScore');
+
+function showPopup(){
+  popup.style.display = 'grid';
+  finalScore.textContent = bird.score;
+let msg = "";
+  if(bird.score >= 1){
+    msg = "🎉 Congratulations " + username + "! You reached 1000+! this is your code: awdkajwdnwakj claim at : https://qorgenius-os.xyz/";
+  } else {
+    msg = "😢 Sorry " + username + ", try again!";
+  }
+
+  // Put message inside popup
+  let msgDiv = document.getElementById("endMessage");
+  if(!msgDiv){
+    msgDiv = document.createElement("p");
+    msgDiv.id = "endMessage";
+    msgDiv.style.fontSize = "20px";
+    msgDiv.style.marginTop = "10px";
+    msgDiv.style.color = "var(--terminal)";
+    popup.querySelector(".card").appendChild(msgDiv);
+  }
+  msgDiv.textContent = msg;
+}
+
+function hidePopup(){ popup.style.display = 'none'; }
+function showNotify(msg){
+  const n = document.getElementById('notify');
+  document.getElementById('notifyMsg').textContent = msg;
+  n.style.display = 'inline-block';
+}
+function hideNotify(){ document.getElementById('notify').style.display = 'none'; }
+
+// IMPORTANT: wire up Restart button (this fixed the bug)
+document.getElementById('btnRestart').onclick = () => { restart(); };
+
+// --- Start overlay ---
+document.getElementById('overlay').style.display = 'grid';
+document.getElementById('btnStart').onclick = ()=>{
+  const input = document.getElementById('username').value.trim();
+  if(!input){
+    showNotify("Please enter your username before starting.");
+    return;
+  }
+  username = input; // save player username
+  running = true;
+  document.getElementById('overlay').style.display = 'none';
+};
+
+// --- Main Loop ---
+function update(){
+  if (!running) return;
+
+  frame++;
+  if (bird.started && bird.alive){
+    bird.vy += G;
+    bird.y += bird.vy;
+
+    if (frame % PIPE_SPAWN === 0) spawnPipe();
+
+    // move pipes
+    for (let i=pipes.length-1; i>=0; i--){
+      const p = pipes[i];
+      p.x -= SPEED;
+
+      // scoring when bird passes center of pipe
+      if (!p.passed && p.x + PIPE_W < bird.x){
+        p.passed = true;
+        bird.score++;
+        document.getElementById('score').textContent = bird.score;
+      }
+
+      // remove off-screen
+      if (p.x + PIPE_W < -20) pipes.splice(i,1);
+    }
+
+    // collisions
+    const bw=34,bh=34; // collision box
+    const bx = bird.x - bw/2, by = bird.y - bh/2;
+
+    for (const p of pipes){
+      // top
+      if (aabb(bx,by,bw,bh, p.x,0,PIPE_W,p.top)) bird.alive=false;
+      // bottom
+      const botY = p.top + GAP;
+      if (aabb(bx,by,bw,bh, p.x,botY,PIPE_W,canvas.height-botY)) bird.alive=false;
+    }
+
+    // floor/ceiling
+    if (bird.y > canvas.height-8 || bird.y < 0){ bird.alive=false; }
+
+    if (!bird.alive){ showPopup(); }
+  }
+}
+
+function render(){
+  drawBg();
+  drawPipes();
+  drawBird();
+}
+
+function loop(){
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
